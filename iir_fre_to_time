@@ -1,0 +1,55 @@
+% MATLAB Code for IIR Time-Domain Impulse Response Comparison
+% -------------------------------------------------------------------------
+% 0. Setup and Data Loading
+% -------------------------------------------------------------------------
+
+% 1. 加载 IIR 滤波器系数 (B_iir, A_iir, fs)
+load('WLS_IIR_Filter_Coefficients.mat'); 
+
+% 2. 加载原始 FIR 数据 (用于对比)
+% ！！！确保路径正确！！！
+load('filters/Room_Home_221025_5_1_HP_HD800_221025.mat');
+full_fir = squeeze(mIRInt(:, 1, 1, 53));  
+
+% 原始 FIR 的长度 N_original，我们用这个长度来计算 IIR 的脉冲响应
+N_original = length(full_fir); 
+
+% -------------------------------------------------------------------------
+% 1. 计算 IIR 滤波器的脉冲响应
+% -------------------------------------------------------------------------
+
+% 使用 impz(B, A, N) 函数计算 IIR 滤波器 B/A 在前 N 个采样点上的
+% 时域脉冲响应 h_iir_time。
+% 这里的 N 必须与原始 FIR 的长度 N_original 相同，才能直接对比。
+disp(['正在计算 IIR 脉冲响应的前 ', num2str(N_original), ' 个采样点...']);
+[h_iir_time, t_samples] = impz(B_iir, A_iir, N_original, fs);
+disp('IIR 脉冲响应计算完成。');
+
+% IIR 的时间轴 (秒)
+t_sec = t_samples; 
+
+% -------------------------------------------------------------------------
+% 2. 可视化对比 (Plotting Comparison)
+% -------------------------------------------------------------------------
+
+figure('Position', [100, 100, 600, 500]); 
+
+subplot(1, 1, 1);
+% 绘制原始 FIR (蓝色实线)
+plot(t_sec, full_fir, 'b', 'LineWidth', 1.5, 'DisplayName', '原始 FIR (Target)');
+hold on;
+% 绘制 IIR 逼近 (红色虚线)
+plot(t_sec, h_iir_time, 'r--', 'LineWidth', 1, 'DisplayName', 'WLS IIR 逼近');
+hold off;
+
+title('完整脉冲响应对比：原始 FIR vs. WLS IIR', 'FontSize', 14);
+xlabel('时间 (秒)', 'FontSize', 12);
+ylabel('幅度', 'FontSize', 12);
+legend('Location', 'northeast');
+grid on;
+
+
+% 将 X 轴限制在前 50 毫秒 (0.05 秒) 以清晰对比起始波形
+xlim([0, 0.05]); 
+legend('Location', 'northwest');
+grid on;
