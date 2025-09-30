@@ -1,0 +1,109 @@
+% MATLAB 代码：WLS IIR 滤波器逼近、比较与误差量化 (新增 LSE & 残差)
+% -------------------------------------------------------------------------
+% 0. 设置与数据加载
+% -------------------------------------------------------------------------
+% 1. 加载已保存的频域数据 (H_half, f_half, fs, Magnitude_dB, Phase_unwrapped_deg)
+load('FIR_Frequency_Response_Data.mat'); 
+% -------------------------------------------------------------------------
+% 1. WLS IIR 滤波器设计 (使用 invfreqz 函数)
+% -------------------------------------------------------------------------
+% 确定 IIR 滤波器阶数 (N: 分子阶数, M: 分母阶数)
+N_order = 100; % 分子 (B) 系数阶数 (极高阶数，可能导致 IIR 退化为 FIR 复制)
+M_order = 100; % 分母 (A) 系数阶数
+% invfreqz 输入数据准备
+% 归一化频率点 omega (从 0 到 pi)
+omega = f_half / (fs / 2) * pi;
+% 权重矩阵 W: 标准最小二乘法 (所有权重为 1)
+W = ones(size(H_half)); 
+disp('正在使用 invfreqz 进行加权最小二乘 IIR 滤波器设计...');
+[B_iir, A_iir] = invfreqz(H_half, omega, N_order, M_order, W); 
+disp('IIR 滤波器设计完成。');
+% -------------------------------------------------------------------------
+% 2. IIR 频率响应计算、相位解卷绕和误差计算
+% -------------------------------------------------------------------------
+% 在相同的频率点上计算 IIR 滤波器的频率响应
+% H_iir_complex 是复数响应
+[H_iir_complex, ~] = freqz(B_iir, A_iir, omega); 
+% 计算 IIR 逼近的幅值响应 (dB)
+Magnitude_iir_dB = 20 * log10(abs(H_iir_complex));
+% 计算 IIR 逼近的解卷绕相位响应 (度)
+Phase_iir_rad = angle(H_iir_complex);
+Phase_iir_unwrapped_deg = unwrap(Phase_iir_rad) * (180/pi); 
+
+% ***************************************************************
+% 新增：计算最小二乘误差 (LSE) 和残差 (Residuals)
+% ***************************************************************
+
+% 残差 Residuals_Complex 是目标复数响应与模型复数响应之间的差异
+% e_k = H_FIR - H_IIR
+Residuals_Complex = H_half - H_iir_complex;
+
+% LSE = Sum of Squared Magnitudes of Complex Residuals (最小二乘法的目标函数)
+% LSE = Sum(|H_FIR - H_IIR|^2)
+LSE = sum(abs(Residuals_Complex).^2);
+
+% 残差的可视化指标：残差幅值 (dB)
+Residuals_Magnitude_dB = 20 * log10(abs(Residuals_Complex));
+
+disp('--------------------------------------------------------------------');
+disp(['量化误差指标 (基于复数响应的最小二乘):']);
+disp(['最小二乘误差 (LSE) = ', num2str(LSE, '%0.4e')]); % 使用科学计数法显示
+disp(['最大残差幅值 (dB) = ', num2str(max(Residuals_Magnitude_dB), '%0.2f'), ' dB']);
+disp('--------------------------------------------------------------------');
+
+% -------------------------------------------------------------------------
+% 3. 可视化比较 (绘图比较)
+% -------------------------------------------------------------------------
+figure('Position', [100, 100, 1000, 1200]); % 增大图形高度以容纳三张子图
+
+% --- 子图 1: 幅值响应比较 (顶部) ---
+subplot(3, 1, 1);
+semilogx(f_half, Magnitude_dB, 'b', 'LineWidth', 1.5, 'DisplayName', '目标 FIR 响应');
+hold on;
+semilogx(f_half, Magnitude_iir_dB, 'r--', 'LineWidth', 1.5, 'DisplayName', 'WLS IIR 逼近');
+hold off;
+title('1. 幅值响应比较：FIR 目标 vs. WLS IIR 逼近', 'FontSize', 14);
+xlabel('频率 (Hz)', 'FontSize', 12);
+ylabel('幅值 (dB)', 'FontSize', 12);
+xlim([20, fs/2]); 
+legend('Location', 'southwest');
+grid on;
+
+% --- 子图 2: 相位响应比较 (中部) ---
+subplot(3, 1, 2);
+% 绘制原始 FIR 解卷绕相位响应 (蓝色)
+semilogx(f_half, Phase_unwrapped_deg, 'b', 'LineWidth', 1.5, 'DisplayName', '目标 FIR 线性相位');
+hold on;
+% 绘制 IIR 逼近解卷绕相位响应 (红色)
+semilogx(f_half, Phase_iir_unwrapped_deg, 'r--', 'LineWidth', 1.5, 'DisplayName', 'WLS IIR 相位');
+hold off;
+title('2. 相位响应比较：FIR 目标 (线性) vs. WLS IIR (非线性)', 'FontSize', 14);
+xlabel('频率 (Hz)', 'FontSize', 12);
+ylabel('相位 (度)', 'FontSize', 12);
+xlim([20, fs/2]); 
+legend('Location', 'southwest');
+grid on;
+
+% --- 子图 3: 残差幅值分析 (底部) ---
+subplot(3, 1, 3);
+semilogx(f_half, Residuals_Magnitude_dB, 'm', 'LineWidth', 1.5, 'DisplayName', '残差幅值');
+hold on;
+% 绘制 0 dB 参考线，残差越负 (越低) 越好
+semilogx(f_half, zeros(size(f_half)), 'k--', 'LineWidth', 1, 'DisplayName', '0 dB 参考'); 
+hold off;
+title(['3. 复数频率响应残差幅值 (最大残差: ', num2str(max(Residuals_Magnitude_dB), '%0.2f'), ' dB)'], 'FontSize', 14);
+xlabel('频率 (Hz)', 'FontSize', 12);
+ylabel('残差幅值 (dB) [20 log10(|H_FIR - H_IIR|)]', 'FontSize', 12);
+xlim([20, fs/2]); 
+grid on;
+ylim([-60, max(Residuals_Magnitude_dB) * 1.1]); % 设定合理的 Y 轴范围
+
+% -------------------------------------------------------------------------
+% 4. 保存结果
+% -------------------------------------------------------------------------
+% 定义保存的文件名
+iir_filename = 'WLS_IIR_Filter_Coefficients.mat'; 
+% 保存 IIR 滤波器系数 B 和 A
+save(iir_filename, 'B_iir', 'A_iir', 'N_order', 'M_order', 'fs'); 
+disp(['IIR 滤波器系数已成功保存到文件: ', iir_filename]);
+disp(['IIR 分子阶数 N: ', num2str(N_order), ', 分母阶数 M: ', num2str(M_order)]);
