@@ -1,1 +1,0 @@
-C:\Users\haering\Anaconda3\python.exe headtracker_win.py
