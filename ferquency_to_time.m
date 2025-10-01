@@ -1,80 +1,89 @@
-% MATLAB Code for FIR Frequency-Domain to Time-Domain Transformation (Comparison)
+% MATLAB Code: IIR vs. FIR Time Domain Impulse Response Comparison
 % -------------------------------------------------------------------------
-% 0. Setup and Data Loading
-% -------------------------------------------------------------------------
-
-% 1. 加载上一步保存的频域数据 (H_half, fs, 等)
-load('FIR_Frequency_Response_Data.mat'); 
-
-% 2. 重新加载原始的 FIR 数据 (用于对比)
-% ！！！注意：这里需要确保您的 filters/ 路径和原始文件与您第一次运行的代码一致
-load('filters/Room_Home_221025_5_1_HP_HD800_221025.mat');
-full_fir = squeeze(mIRInt(:, 1, 1, 53));  
-
-% 检查原始 IR 的长度 N_original
-N_original = length(full_fir);
-
-% -------------------------------------------------------------------------
-% 1. 频域对称性重构 (Reconstruct Full Spectrum)
+% 0. 初始化参数与数据加载
 % -------------------------------------------------------------------------
 
-% 单边谱 H_half 包含 DC (H(1)) 到 Nyquist (H(end))
-N_half = length(H_half);
-N_full = 2 * (N_half - 1); % IFFT需要的点数 N_full (本例中 N=63000)
+% 设定两个滤波器的目标采样频率
+fs_target = 44100; % Hz
 
-% --- 重构 H_reconstructed (与原 IFFT 脚本一致) ---
-if mod(N_full, 2) == 0 
-    H_conjugate = conj(flipud(H_half(2:end-1)));
-else 
-    H_conjugate = conj(flipud(H_half(2:end)));
+% 1. 加载 IIR 滤波器系数 (B_iir, A_iir)
+iir_filename = 'WLS_IIR_Filter_Coefficients.mat'; 
+try
+    load(iir_filename);
+    if ~exist('B_iir', 'var') || ~exist('A_iir', 'var')
+        error('加载的文件中缺少 B_iir 或 A_iir 系数。');
+    end
+catch ME
+    disp(['错误: 无法加载文件 ', iir_filename, '，请确保该文件存在并包含 B_iir 和 A_iir。']);
+    return; % 终止程序
 end
-H_reconstructed = [H_half; H_conjugate];
+
+% 2. 加载原始 FIR 数据 (作为比较的目标)
+fir_data_file = 'filters/Room_Home_221025_5_1_HP_HD800_221025.mat';
+try
+    load(fir_data_file); 
+    % 提取特定的冲激响应序列: 左耳(1), 扬声器 1(1), 角度索引 53
+    h_fir_full = squeeze(mIRInt(:, 1, 1, 53));  
+catch ME
+    disp(['错误: 无法加载或解析原始 FIR 数据文件 ', fir_data_file, '。']);
+    return; % 终止程序
+end
+
+% 确定原始 FIR 的长度和持续时间 (以进行精确对比)
+N_fir_samples = length(h_fir_full); 
+duration_sec = N_fir_samples / fs_target;
+
+disp(['原始 FIR 长度: ', num2str(N_fir_samples), ' 个样本。']);
+disp(['对比持续时间: ', num2str(duration_sec), ' 秒 (基于 FIR 目标)。']);
 
 % -------------------------------------------------------------------------
-% 2. 逆快速傅里叶变换 (IFFT)
+% 1. 计算 IIR 滤波器冲激响应
 % -------------------------------------------------------------------------
 
-h_ifft = ifft(H_reconstructed);
-h_reconstructed_fir = real(h_ifft); 
+% 使用 impz(B, A, N, fs) 计算 IIR 滤波器在相同长度 (N_fir_samples) 下的冲激响应
+% N 必须匹配原始 FIR 的长度 (N_fir_samples)
+disp('正在计算 IIR 逼近的冲激响应...');
+[h_iir_time, t_samples] = impz(B_iir, A_iir, N_fir_samples, fs_target);
+disp('IIR 冲激响应计算完成。');
 
 % -------------------------------------------------------------------------
-% 3. 可视化对比 (Plotting Comparison)
+% 2. 可视化对比 (时域)
 % -------------------------------------------------------------------------
 
-% 创建时间轴 (秒)
-t = (0:N_full-1) / fs; 
+figure('Name', 'IIR vs. FIR 时域冲激响应对比', 'Position', [100, 100, 800, 600]); 
 
-figure('Position', [100, 100, 1200, 500]); 
-
-% --- 子图 1: 完整的 IR 对比 ---
-subplot(1, 2, 1);
-% 绘制原始 IR (蓝色实线)
-plot(t, full_fir, 'b', 'LineWidth', 1.5, 'DisplayName', '原始 FIR (full\_fir)');
+% 绘制对比图
+plot(t_samples, h_fir_full, 'b', 'LineWidth', 1.5, 'DisplayName', '目标 FIR 响应 (线性相位)');
 hold on;
-% 绘制重构 IR (红色虚线)
-plot(t, h_reconstructed_fir, 'r--', 'LineWidth', 1, 'DisplayName', '重构 FIR (IFFT 结果)');
+plot(t_samples, h_iir_time, 'r--', 'LineWidth', 1, 'DisplayName', 'WLS IIR 逼近 (非线性相位)');
 hold off;
 
-title('完整脉冲响应对比：原始 vs. 重构', 'FontSize', 14);
+title('IIR vs. FIR 时域冲激响应对比 (完整持续时间)', 'FontSize', 14);
 xlabel('时间 (秒)', 'FontSize', 12);
 ylabel('幅度', 'FontSize', 12);
 legend('Location', 'northeast');
 grid on;
 
-% --- 子图 2: 放大 IR 的关键起始部分 (用于观察精度) ---
-subplot(1, 2, 2);
-plot(t, full_fir, 'b', 'LineWidth', 1.5, 'DisplayName', '原始 FIR');
+% -------------------------------------------------------------------------
+% 3. (可选) 细节放大图 (观察波形差异)
+% -------------------------------------------------------------------------
+
+figure('Name', 'IIR vs. FIR 时域响应细节对比', 'Position', [950, 100, 800, 600]); 
+
+plot(t_samples, h_fir_full, 'b', 'LineWidth', 1.5, 'DisplayName', '目标 FIR 响应');
 hold on;
-plot(t, h_reconstructed_fir, 'r--', 'LineWidth', 1, 'DisplayName', '重构 FIR');
+plot(t_samples, h_iir_time, 'r--', 'LineWidth', 1, 'DisplayName', 'WLS IIR 逼近');
 hold off;
 
-title('脉冲响应起始部分放大对比', 'FontSize', 14);
+% 限制 X 轴到一个较短的时间窗口 (例如，前 50 毫秒) 来查看瞬态细节
+% 这对于观察 FIR 和 IIR 在波形上的时间对齐差异非常有用
+detail_limit_sec = 0.05; 
+xlim([0, detail_limit_sec]); 
+ylim_range = max(abs([h_fir_full(t_samples<detail_limit_sec); h_iir_time(t_samples<detail_limit_sec)]));
+ylim([-ylim_range*1.1, ylim_range*1.1]); % 自动调整 Y 轴范围
+
+title(['IIR vs. FIR 冲激响应细节对比 (前 ', num2str(detail_limit_sec*1000), ' 毫秒)'], 'FontSize', 14);
 xlabel('时间 (秒)', 'FontSize', 12);
 ylabel('幅度', 'FontSize', 12);
-
-% 将 X 轴限制在前 50 毫秒 (0.05 秒) 以清晰对比起始波形
-xlim([0, 0.05]); 
 legend('Location', 'northwest');
-grid on;
-
-disp('已完成原始和重构脉冲响应的可视化对比。');
+grid on
