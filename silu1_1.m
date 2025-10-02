@@ -22,8 +22,8 @@ t_cut_s = t_cut_ms / 1000;
 idx_cut_start = floor(t_cut_s * fs) + 1; % 80ms 后第一个样本的索引
 
 % 定义 IIR 滤波器阶数
-N_order = 7500; % 分子 (B) 系数阶数
-M_order = 7500; % 分母 (A) 系数阶数
+N_order = 5000; % 分子 (B) 系数阶数
+M_order = 5000; % 分母 (A) 系数阶数
 
 disp(['原始 FIR 长度: ', num2str(N_fir_samples), ' 个样本。']);
 disp(['IIR 拟合的截断起始点: ', num2str(t_cut_ms), ' ms (索引 ', num2str(idx_cut_start), ')']);
@@ -164,7 +164,7 @@ for i = 1:num_channels
     
     % A. 时域对齐 (IIR 响应从 idx_cut_start 开始)
     h_iir_raw = iir_data.h_iir_raw;
-    h_iir_aligned = zeros(N_fir_samples, 1);
+   % h_iir_aligned = zeros(N_fir_samples, 1);
     
     % IIR 响应应该被放置的部分长度
     len_iir_part = N_fir_samples - idx_cut_start + 1;
