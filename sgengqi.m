@@ -311,17 +311,22 @@ while true % endless
     mOut      = mWeightsDown.*mOut_Old + mWeightsUp.*mOut_Cur;
 
 
-%% Apply IIR post-filtering (FIR → IIR hybrid stage)
-% -------------------------------------------------------------------------
-% Each receiver (2) × each transmitter (iNoTx=6)
-mOut_IIR = zeros(size(mOut)); % same size as mOut (frameLength × iNoTx)
+%% --- IIR filtering after FIR ---
+% 初始化状态数组（在循环外初始化一次即可）
+if iCount == 1
+    nMax = max(cellfun(@length, mIIR_A(:))) - 1;  % 最大阶数
+    mIIRReg = zeros(nMax, 2, iNoTx);             % 对应 [阶数, 接收源, 发射源]
+end
+
+% 对每个接收源 × 发射源分别过滤
 for iCRx = 1:2
-  for iCTx = 1:iNoTx
-    b = double(squeeze(mIIR_B(iCRx,iCTx,:)));
-    a = double(squeeze(mIIR_A(iCRx,iCTx,:)));
-    x = double(mOut(:,iCTx));
-    [mOut_IIR(:,iCTx), mIIRReg(:,iCRx,iCTx)] = filter(b, a, x, mIIRReg(:,iCRx,iCTx));
-  end
+    for iCTx = 1:iNoTx
+        b = mIIR_B{iCRx,iCTx}(:);  % 确保列向量
+        a = mIIR_A{iCRx,iCTx}(:);  % 确保列向量
+
+        % IIR 滤波
+        [mOut(:,iCTx), mIIRReg(:,iCRx,iCTx)] = filter(b, a, mOut(:,iCTx), mIIRReg(:,iCRx,iCTx));
+    end
 end
 
 % Replace original mOut with filtered version
