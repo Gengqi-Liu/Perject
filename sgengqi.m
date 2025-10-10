@@ -1,88 +1,26 @@
+%10.10全新版本，调整了逻辑且使用5.1声道iir
 addpath('utils');
 SetParameters;
-
+%% Initialize IIR Filters (for each ear × transmitter pair)
 % -------------------------------------------------------------------------
-% 关键修改：加载 IIR 滤波器系数并转换为 SOS 形式
-% -------------------------------------------------------------------------
-
-iir_lock_filename = 'WLS_IIR_Coefficients_N7500_M7500_A53_Full_Process.mat';
-try
-    load(iir_lock_filename, 'IIR_Results', 'fs');
-    disp(['IIR 系数文件 ', iir_lock_filename, ' 加载成功。']);
-
-    % 1. 定义左耳和右耳要使用的 IIR 滤波器
-    % 假设使用扬声器 1 的 IIR 滤波器作为该耳的锁定 IIR 补偿。
-    IIR_Left = IIR_Results.Ch11; % 左耳滤波器 (例如 Ch11)
-    IIR_Right = IIR_Results.Ch21; % 右耳滤波器 (例如 Ch21)
-
-    % 2. 将 IIR 系数 (B/A) 转换为双二阶级联 (SOS) 形式
-    % 由于原始 IIR 是高阶 FIR 拟合得到的，需要使用 tf2sos 转换为稳定的 SOS 结构
-    disp('Converting IIR coefficients to SOS form...');
-    % 左耳 IIR
-    [sos_Left, g_Left] = tf2sos(IIR_Left.B_iir, IIR_Left.A_iir);
-    % 右耳 IIR
-    [sos_Right, g_Right] = tf2sos(IIR_Right.B_iir, IIR_Right.A_iir);
-
-    % 3. 将左右耳 SOS 级联在一起，创建一个 2 通道的 dsp.SOSFilter 对象
-    % SOS 矩阵必须是 (M x 6) 格式。对于双通道，我们用 cell 数组存储
-    fixedIIR_sosCoefficients = {sos_Left, sos_Right};
-    fixedIIR_gain = [g_Left, g_Right];
-
-    disp('Initializing Dual-Channel Fixed IIR Filter...');
-    % 初始化 dsp.FilterBank 对象来处理双通道，或手动创建两个 dsp.SOSFilter 对象
-    % 这里我们手动创建两个 dsp.SOSFilter 对象，更直接易懂
-    Fsos_FixedIIR_L = dsp.SOSFilter( ...
-        fixedIIR_sosCoefficients{1}(:,1:3), ... % Numerator (b)
-        fixedIIR_sosCoefficients{1}(:,4:6), ... % Denominator (a)
-        'Structure', 'DirectFormII', 'ScaleValues', fixedIIR_gain(1));
-
-    Fsos_FixedIIR_R = dsp.SOSFilter( ...
-        fixedIIR_sosCoefficients{2}(:,1:3), ... % Numerator (b)
-        fixedIIR_sosCoefficients{2}(:,4:6), ... % Denominator (a)
-        'Structure', 'DirectFormII', 'ScaleValues', fixedIIR_gain(2));
-
-catch ME
-    warning(['无法加载或处理文件 ', iir_lock_filename, '。将使用占位符 IIR 滤波器。']);
-    % 如果加载失败，回退到占位符（保持代码兼容性）
-    fixedIIR_sosCoefficients = [ ...
-         1.0000, 2.0000, 1.0000, 1.0000, -0.5000, 0.1000;
-         1.0000, 2.0000, 1.0000, 1.0000, -0.3000, 0.0500 
-    ];
-    Fsos_FixedIIR_L = dsp.SOSFilter(fixedIIR_sosCoefficients(:,1:3), fixedIIR_sosCoefficients(:,4:6), 'Structure', 'DirectFormII');
-    Fsos_FixedIIR_R = dsp.SOSFilter(fixedIIR_sosCoefficients(:,1:3), fixedIIR_sosCoefficients(:,4:6), 'Structure', 'DirectFormII');
+% Example placeholder file; replace later with your real IIR coefficients
+if exist('IIR_filters.mat','file')
+  load('IIR_filters.mat','mIIR_B','mIIR_A');
+  disp('Loaded IIR filters (mIIR_B, mIIR_A)');
+else
+  % Placeholder: simple lowpass-type IIR (for testing)
+  [b0,a0] = butter(2, 0.4); % 2nd-order, normalized cutoff 0.4
+  mIIR_B = repmat(reshape(b0,1,1,[]),[2,6,1]); % 2 Rx × 6 Tx
+  mIIR_A = repmat(reshape(a0,1,1,[]),[2,6,1]);
+  disp('Using placeholder IIR filters (butterworth 2nd order)');
 end
 
-% -------------------------------------------------------------------------
-% 原代码其余部分 (InitializeNUPOLS、Crossover filter、Initialize UDP receiver等)
-% 保持不变...
-% -------------------------------------------------------------------------
-%% test Nicos filters
-% load mIRInt_fitted_full.mat
-% load sosCoefficients.mat
-% mEQReg = zeros(size(mEQ_A,2)-1,size(mEQ_A,1),2);
-% [vEQ_B,vEQ_A] = sos2tf([mEQ_B,mEQ_A],1);
-% mEQReg2 = zeros(length(vEQ_A)-1,2);
-
+% Initialize filter memory for all 12 filters
+maxOrder = max(size(mIIR_A,3), size(mIIR_B,3)) - 1;
+mIIRReg = zeros(maxOrder,2,6);  % [order, iCRx, iCTx]
 
 %% Initialize NUPOLS
-% sFilterName = 'AKG712_2.0_3D_Home'; % 1: -30° nach unten, 2: 0°, 3: 30° nach oben
-% sFilterName = 'HD800_5.1_3D_Home'; % 1: -30° nach unten, 2: 0°, 3: 30° nach oben
-% sFilterName = 'Netflix_HD800'; %_with_center
-% sFilterName = 'Room_Home_221025_left_right_center_HP_HD800_221025';
 
-sFilterName = 'Room_Home_221025_5_1_HP_HD800_221025';
-% 
-load(['filters/',sFilterName,'.mat']);
-
-
-% vertical extrapolation
-% vAngleVer(1) = -30;
-% mIRInt3D(:,:,:,:,1) = tiltEQ(mIRInt,20,20000,1.05,1.0,44100);
-% vAngleVer(2) = 0;
-% mIRInt3D(:,:,:,:,2) = mIRInt;
-% vAngleVer(3) = 30;
-% mIRInt3D(:,:,:,:,3) = tiltEQ(mIRInt,20,20000,0.95,1.05,44100);
-% mIRInt = mIRInt3D;
 
 % only for bBLEAudio on Windows -> 48kHz
 bBLEAudio = false;
@@ -128,16 +66,6 @@ bTrinaural = false;
 crossFilt = crossoverFilter('NumCrossovers',1,'CrossoverFrequencies',5000, ...
     'CrossoverSlopes',12);
 [b1,a1,b2,a2] = getFilterCoefficients(crossFilt,1);
-% filter_order = 12;
-% crossover_frequency = 5000;
-
-% [B_highpass, A_highpass] = butter( filter_order, crossover_frequency/fSamplFreq*2, 'high' );            
-% [B_lowpass,  A_lowpass ] = butter( filter_order, crossover_frequency/fSamplFreq*2, 'low'  );
-% 
-% [output_low,  state_lowpass_1st ] = filter( B_lowpass,  A_lowpass,  input_pcm_samples, state_lowpass_1st );
-% [output_low,  state_lowpass_2nd ] = filter( B_lowpass,  A_lowpass,  output_low,        state_lowpass_2nd );
-% [output_high, state_highpass_1st] = filter( B_highpass, A_highpass, input_pcm_samples, state_highpass_1st);
-% [output_high, state_highpass_2nd] = filter( B_highpass, A_highpass, output_high,       state_highpass_2nd);
 
 
 %% Initialize UDP receiver for headtracker
@@ -152,63 +80,41 @@ else % macOS
 end
 u = udpport("datagram",'LocalHost','127.0.0.1','LocalPort',5005);
 
-%% Initialize UDP receiver for webcam headtracker
-% if exist('u2','var')
-%   clear u2
-% end
-% echoudp("off")
-% if ispc
-%   echoudp("on",5007)
-% else % macOS
-%   echoudp("on",5006)
-% end
-% u2 = udpport("datagram",'LocalHost','127.0.0.2','LocalPort',5007);
 
 %% Initialize counters etc.
-iCount        = 0;
-fAngleHor     = 0;
-fAngleVer     = 0;
-fAngleHorCal  = 0; iCalCount = 0;
+iCount        = 0;
+fAngleHor     = 0;
+fAngleVer     = 0;
+fAngleHorCal  = 0; iCalCount = 0;
 vAngleHorSave = zeros(1,1e5,'single');
 vAngleHorSave2 = zeros(1,1e5,'single');
 vAngleHorPred = zeros(1,1e5,'single');
-bHeadphone    = true; % start with headphone ON
-iCountMax     = 0;
-fMaxAmpl      = 0;
-iRunTimeLen   = 100000;
-vRunTime      = zeros(1,iRunTimeLen,'single');
-vUnderrun     = false(1,iRunTimeLen);
+bHeadphone    = true; % start with headphone ON
+iCountMax     = 0;
+fMaxAmpl      = 0;
+iRunTimeLen   = 100000;
+vRunTime      = zeros(1,iRunTimeLen,'single');
+vUnderrun     = false(1,iRunTimeLen);
 
 % For speaker implementation
-iDelay        = 50;
-vIR           = [zeros(1,iDelay+1),1];
-mReg          = zeros(length(vIR)-1,iNoTx);
+iDelay        = 50;
+vIR           = [zeros(1,iDelay+1),1];
+mReg          = zeros(length(vIR)-1,iNoTx);
 % For fading implementation: Output is calculated twice (old/current) and
 % mixed
-vWeightsUp    = (1:frameLength).'/frameLength';
-mWeightsUp    = repmat(vWeightsUp,1,2);
-mWeightsDown  = 1-mWeightsUp;
+vWeightsUp    = (1:frameLength).'/frameLength;
+mWeightsUp    = repmat(vWeightsUp,1,2);
+mWeightsDown  = 1-mWeightsUp;
 
 %%
-% figure
-% p2=plot([0:1000-1]/44.1,mIRInt(1:1000,:,1,1));
-% axis([0,(1000-1)/44.1,-0.2,0.2]); grid on;
-% xlabel('Time [ms]'); ylabel('Amplitude');
-% pause(1)
 
-% Fsos = dsp.SOSFilter(sosCoefficients(:,1:3),sosCoefficients(:,4:6)); % Original line from script
+%%
 
+Fsos = dsp.SOSFilter(sosCoefficients(:,1:3),sosCoefficients(:,4:6));
 
 %% Real-time processing
 disp('Real-time convolving starts ... ')
 while true % endless
-
-  % % if mod(iCount,iNoIterShowDisplay)==1
-  % if mod(iCount,100)==1
-  %   set(p2(1),'YData',mIRInt(1:1000,1,1,mod(iCount,101)+1))
-  %   set(p2(2),'YData',mIRInt(1:1000,2,1,mod(iCount,101)+1))
-  %   drawnow
-  % end
 
   iCount = iCount + 1;
 
@@ -219,12 +125,6 @@ while true % endless
     fAngleHor = str2double(sAngleNew(1:8));
     fAngleVer = str2double(sAngleNew(9:16));
   end 
-  % if u2.NumDatagramsAvailable > 0
-  %   data = read(u2,u2.NumDatagramsAvailable,"double");
-  %   vAngleNew = data(end).Data;
-  %   fAngleHor = -vAngleNew(4);
-  %   fAngleVer = vAngleNew(5);
-  % end 
 
   % Kalman filtering of raw data will be added here later
   vAngleHorPred(mod(iCount-1,length(vAngleHorPred))+1) = fAngleHor;
@@ -243,13 +143,9 @@ while true % endless
       fAngleHorCal = fAngleHor;
       iCalCount = 0;
     end
-    % vAngleHorPred(mod(iCount-1,length(vAngleHorPred))+1) = fAngleHor - fAngleHorCal;
+    
     vAngleHorPred(mod(iCount-1,length(vAngleHorPred))+1) = mod(fAngleHor-fAngleHorCal-180,360)-180;
   end
-% 
-% 
-% fSamplFreq = 44.1e3;
-% frameLength = 128;
 
   %% Toggle between headphone and loudspeakers
   if mod(iCount,5)==1
@@ -258,8 +154,8 @@ while true % endless
         bHeadphone = false;
         release(deviceWriterActive);
         deviceWriterActive = deviceWriterSpeaker;
-        mReg   = zeros(length(vIR)-1,iNoTx);
-        mOut   = zeros(frameLength,iNoTx);
+        mReg   = zeros(length(vIR)-1,iNoTx);
+        mOut   = zeros(frameLength,iNoTx);
       end
     else % Speakers are on
       if fAngleVer>-55
@@ -271,7 +167,7 @@ while true % endless
   end
 
   %% Read data
-  mIn       = fileReader();
+  mIn       = fileReader();
 
   % crossover filter
 
@@ -295,12 +191,9 @@ while true % endless
 
   % trinaural synthesis
   if bTrinaural
-%     [mIn,mIn2] = crossFilt(mIn);
+
     w = 1;
-    % phi = atan(sqrt(2)/2); % Gerzon: 35.26°
-    % phi = asin(2/3); % Pekonen: 41.8°
-    % phi = atan(sqrt(2)); % Gerzon: 54.74°
-    % phi = 90*pi/180; % inactive
+    
     a = 1/2*(sin(phi) + w);
     b = 1/2*(sin(phi) - w);
     c = 1/sqrt(2)*cos(phi);
@@ -337,18 +230,18 @@ while true % endless
         vAngle,vRunTime,vUnderrun,fUpdateTime,iCount);
     end
 
-    %% Frequency-domain real-time convolution (FIR - Binaural Rendering)
-    iCMod = 1+mod(iCount-1,length(vAngleHorSave));
-    vAngleHorSave(iCMod) = fAngleHor; % save angle for debugging
-    % vAngleHorSave2(iCMod) = fAngleHor2; % save angle for debugging (2nd headtracker)
-    [~,iAngleIndOld] = min(abs(vAngle-vAngleHorPred(1+mod(iCMod-2,length(vAngleHorSave)))));
-    [~,iAngleIndCur] = min(abs(vAngle-vAngleHorPred(iCMod)));
+    %% Frequency-domain real-time convolution
+    iCMod                 = 1+mod(iCount-1,length(vAngleHorSave));
+    vAngleHorSave(iCMod)  = fAngleHor; % save angle for debugging
+   
+    [~,iAngleIndOld]      = min(abs(vAngle-vAngleHorPred(1+mod(iCMod-2,length(vAngleHorSave)))));
+    [~,iAngleIndCur]      = min(abs(vAngle-vAngleHorPred(iCMod)));
 
     %% Update ring buffer
-    iCircPt_x             = mod(iCount-1,N_RB_x)+1;
-    iCircPt_y             = mod(iCount-1,N_RB_y)+1;
+    iCircPt_x             = mod(iCount-1,N_RB_x)+1;
+    iCircPt_y             = mod(iCount-1,N_RB_y)+1;
     x_ring(:,iCircPt_x,:) = mIn;
-    iCircPt_y_Del                 = mod(iCircPt_y-1-1,N_RB_y)+1;
+    iCircPt_y_Del                 = mod(iCircPt_y-1-1,N_RB_y)+1;
     y_ring_old(:,iCircPt_y_Del,:) = 0;
     y_ring_cur(:,iCircPt_y_Del,:) = 0;
 
@@ -356,7 +249,7 @@ while true % endless
     if mod(iCount,Bi(1)/B==0) % when it is available, here every block
       iC1 = iC1 + 1;
       vInd1_x = iCircPt_x;
-      mIn     = x_ring(:,vInd1_x,:);
+      mIn     = x_ring(:,vInd1_x,:);
       vIndUpdate = [iAngleIndOld,iAngleIndCur]; % will be called in any iteration
       % H1(:,:,:,:,vIndUpdate) = interpElevation(H1tp(:,:,:,:,vIndUpdate,:),vAngleVer,fAngleVer); 
       [y_part1_old,x_in_buf1_old,mFDL_buf1_old] = UPConv(mIn,x_in_buf1_old,mFDL_buf1_old,vTxInd,H1,iC1,iAngleIndOld,Bi(1),Pi(1));
@@ -369,7 +262,7 @@ while true % endless
     if numel(Bi)>1 && mod(iCount,Bi(2)/B)==0 % when it is available
       iC2 = iC2 + 1;
       vInd2_x = mod(iCircPt_x+(-Bi(2)/B+1:0)-1,N_RB_x)+1;
-      mIn     = reshape(x_ring(:,vInd2_x,:),Bi(2),[]);
+      mIn     = reshape(x_ring(:,vInd2_x,:),Bi(2),[]);
       vIndUpdate = [iAngleIndOld,iAngleIndCur];
       % H2(:,:,:,:,vIndUpdate) = interpElevation(H2tp(:,:,:,:,vIndUpdate,:),vAngleVer,fAngleVer); 
       [y_part2_old,x_in_buf2_old,mFDL_buf2_old] = UPConv(mIn,x_in_buf2_old,mFDL_buf2_old,vTxInd,H2,iC2,iAngleIndOld,Bi(2),Pi(2));
@@ -382,11 +275,11 @@ while true % endless
     if numel(Bi)>2 && mod(iCount,Bi(3)/B)==0+vSchedOffset(3) % when it is available
       iC3 = iC3 + 1;
       vInd3_x = mod(iCircPt_x-vSchedOffset(3)+(-Bi(3)/B+1:0)-1,N_RB_x)+1;
-      mIn     = reshape(x_ring(:,vInd3_x,:),Bi(3),[]);
+      mIn     = reshape(x_ring(:,vInd3_x,:),Bi(3),[]);
       vIndUpdate = [iAngleIndOld,iAngleIndCur];
       % H3(:,:,:,:,vIndUpdate) = interpElevation(H3tp(:,:,:,:,vIndUpdate,:),vAngleVer,fAngleVer); 
-      [y_part3_old,x_in_buf3_old,mFDL_buf3_old] = UPConv(mIn,x_in_buf3_old,mFDL_buf3_old,vTxInd,H3,iC3,iAngleIndOld,Bi(3),Pi(3));
-      [y_part3_cur,x_in_buf3_cur,mFDL_buf3_cur] = UPConv(mIn,x_in_buf3_cur,mFDL_buf3_cur,vTxInd,H3,iC3,iAngleIndCur,Bi(3),Pi(3));
+      [y_part3_old,x_in_buf3_old,mFDL_buf3_old]  = UPConv(mIn,x_in_buf3_old,mFDL_buf3_old,vTxInd,H3,iC3,iAngleIndOld,Bi(3),Pi(3));
+      [y_part3_cur,x_in_buf3_cur,mFDL_buf3_cur]  = UPConv(mIn,x_in_buf3_cur,mFDL_buf3_cur,vTxInd,H3,iC3,iAngleIndCur,Bi(3),Pi(3));
       vInd3_y = mod(iCircPt_y-vSchedOffset(3)+vBlockDelay(3)+(0:Bi(3)/B-1)-1,N_RB_y)+1;
       y_ring_old(:,vInd3_y,:) = y_ring_old(:,vInd3_y,:) + reshape(y_part3_old,B,Bi(3)/B,[]);
       y_ring_cur(:,vInd3_y,:) = y_ring_cur(:,vInd3_y,:) + reshape(y_part3_cur,B,Bi(3)/B,[]);
@@ -395,20 +288,36 @@ while true % endless
     if numel(Bi)>=4 && mod(iCount,Bi(4)/B)==0+vSchedOffset(4) % when it is available
       iC4 = iC4 + 1;
       vInd4_x = mod(iCircPt_x-vSchedOffset(4)+(-Bi(4)/B+1:0)-1,N_RB_x)+1;
-      mIn     = reshape(x_ring(:,vInd4_x,:),Bi(4),[]);
-      % H4(:,:,:,:,vIndUpdate) = interpElevation(H4tp(:,:,:,:,vIndUpdate,:),vAngleVer,fAngleVer);       
-      [y_part4_old,x_in_buf4_old,mFDL_buf4_old] = UPConv(mIn,x_in_buf4_old,mFDL_buf4_old,vTxInd,H4,iC4,iAngleIndOld,Bi(4),Pi(4));
-      [y_part4_cur,x_in_buf4_cur,mFDL_buf4_cur] = UPConv(mIn,x_in_buf4_cur,mFDL_buf4_cur,vTxInd,H4,iC4,iAngleIndCur,Bi(4),Pi(4));
+      mIn     = reshape(x_ring(:,vInd4_x,:),Bi(4),[]);
+      % H4(:,:,:,:,vIndUpdate) = interpElevation(H4tp(:,:,:,:,vIndUpdate,:),vAngleVer,fAngleVer);       
+      [y_part4_old,x_in_buf4_old,mFDL_buf4_old]  = UPConv(mIn,x_in_buf4_old,mFDL_buf4_old,vTxInd,H4,iC4,iAngleIndOld,Bi(4),Pi(4));
+      [y_part4_cur,x_in_buf4_cur,mFDL_buf4_cur]  = UPConv(mIn,x_in_buf4_cur,mFDL_buf4_cur,vTxInd,H4,iC4,iAngleIndCur,Bi(4),Pi(4));
       vInd4_y = mod(iCircPt_y-vSchedOffset(4)+vBlockDelay(4)+(0:Bi(4)/B-1)-1,N_RB_y)+1;
       y_ring_old(:,vInd4_y,:) = y_ring_old(:,vInd4_y,:) + reshape(y_part4_old,B,Bi(4)/B,[]);
       y_ring_cur(:,vInd4_y,:) = y_ring_cur(:,vInd4_y,:) + reshape(y_part4_cur,B,Bi(4)/B,[]);
     end
 
     %% Take block from ring buffer
-    mOut_Old  = squeeze(y_ring_old(:,iCircPt_y,:));
-    mOut_Cur  = squeeze(y_ring_cur(:,iCircPt_y,:));
+    mOut_Old  = squeeze(y_ring_old(:,iCircPt_y,:));
+    mOut_Cur  = squeeze(y_ring_cur(:,iCircPt_y,:));
     % Fading: Combine old and current output
-    mOut      = mWeightsDown.*mOut_Old + mWeightsUp.*mOut_Cur;
+    mOut      = mWeightsDown.*mOut_Old + mWeightsUp.*mOut_Cur;
+
+
+%% Apply IIR post-filtering (FIR → IIR hybrid stage)
+% -------------------------------------------------------------------------
+% Each receiver (2) × each transmitter (iNoTx=6)
+mOut_IIR = zeros(size(mOut)); % same size as mOut (frameLength × iNoTx)
+for iCRx = 1:2
+  for iCTx = 1:iNoTx
+    [mOut_IIR(:,iCTx), mIIRReg(:,iCRx,iCTx)] = ...
+        filter(squeeze(mIIR_B(iCRx,iCTx,:)), squeeze(mIIR_A(iCRx,iCTx,:)), ...
+               mOut(:,iCTx), mIIRReg(:,iCRx,iCTx));
+  end
+end
+
+% Replace original mOut with filtered version
+mOut = mOut_IIR;
 
     %% headphone equalization
     if 0%bHPEQ
@@ -417,30 +326,25 @@ while true % endless
       end
     end
 
-    % %% Nicos equalization (Original script commented out)
+    % %% Nicos equalization
     % for iCRx=1:2
-    %   for iCSec=1:size(mEQ_B,1)
-    %     [mOut(:,iCRx),mEQReg(:,iCSec,iCRx)] = filter(mEQ_B(iCSec,:),mEQ_A(iCSec,:),mOut(:,iCRx),mEQReg(:,iCSec,iCRx));
-    %   end
+    %   for iCSec=1:size(mEQ_B,1)
+    %     [mOut(:,iCRx),mEQReg(:,iCSec,iCRx)] = filter(mEQ_B(iCSec,:),mEQ_A(iCSec,:),mOut(:,iCRx),mEQReg(:,iCSec,iCRx));
+    %   end
     % end
     % for iCRx=1:2
-    %   [mOut(:,iCRx),mEQReg2(:,iCRx)] = filter(vEQ_B,vEQ_A,mOut(:,iCRx),mEQReg2(:,iCRx));
+    %   [mOut(:,iCRx),mEQReg2(:,iCRx)] = filter(vEQ_B,vEQ_A,mOut(:,iCRx),mEQReg2(:,iCRx));
     % end
 
 
-    %% 2. 應用固定的 IIR 滤波器 (Updated Fixed IIR Filter)
-    % mOut 是 [frameLength x 2] (Left/Right)
-    % 使用加载的 IIR 滤波器分别处理左右耳
-    
-    % 左耳 (iCRx = 1)
-    mOut(:,1) = Fsos_FixedIIR_L(mOut(:,1));
-    
-    % 右耳 (iCRx = 2)
-    mOut(:,2) = Fsos_FixedIIR_R(mOut(:,2));
+    % Signalverarbeitung (z. B. Block mit N Samples)
+    for iCRx = 1:2
+%         mOut(:,iCRx) = Fsos(msOut(:,iCRx));  % Filterung mit Zustand
+    end
 
     %% Preamplifier
-    mOut      = 2*mOut;
-    fMaxAmpl  = max(max(abs(mOut(:))),fMaxAmpl);
+    mOut      = 2*mOut;
+    fMaxAmpl  = max(max(abs(mOut(:))),fMaxAmpl);
     if bShowDisplay && mod(iCount,iNoIterShowDisplay)==1
       if fMaxAmpl>0.5
         iCountMax = iCountMax + 1;
@@ -454,7 +358,7 @@ while true % endless
     % save run time per iteration for speed analysis
     vRunTime(mod(iCount-1,length(vRunTime))+1) = toc;
   end
-  %% Write data to output buffer (Real-time output step)
+  %% Write data to output buffer
   nUnderrun = play(deviceWriterActive,mOut);
   vUnderrun(mod(iCount-1,length(vRunTime))+1) = false;
   if nUnderrun > 0
