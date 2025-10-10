@@ -310,9 +310,10 @@ while true % endless
 mOut_IIR = zeros(size(mOut)); % same size as mOut (frameLength × iNoTx)
 for iCRx = 1:2
   for iCTx = 1:iNoTx
-    [mOut_IIR(:,iCTx), mIIRReg(:,iCRx,iCTx)] = ...
-        filter(squeeze(mIIR_B(iCRx,iCTx,:)), squeeze(mIIR_A(iCRx,iCTx,:)), ...
-               mOut(:,iCTx), mIIRReg(:,iCRx,iCTx));
+    b = double(squeeze(mIIR_B(iCRx,iCTx,:)));
+    a = double(squeeze(mIIR_A(iCRx,iCTx,:)));
+    x = double(mOut(:,iCTx));
+    [mOut_IIR(:,iCTx), mIIRReg(:,iCRx,iCTx)] = filter(b, a, x, mIIRReg(:,iCRx,iCTx));
   end
 end
 
