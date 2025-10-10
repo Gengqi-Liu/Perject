@@ -62,8 +62,17 @@ for ear = 1:num_ears
         
         % ---------------------------
         % 保存 IIR 系数
-        mIIR_B{ear, spk} = B_iir;
-        mIIR_A{ear, spk} = A_iir;
+        mIIR_B_array = zeros(num_ears, num_speakers, B_order+1);
+        mIIR_A_array = zeros(num_ears, num_speakers, A_order+1);
+
+        for ear = 1:num_ears
+            for spk = 1:num_speakers
+                B_vec = mIIR_B{ear, spk};
+                A_vec = mIIR_A{ear, spk};
+                mIIR_B_array(ear, spk, 1:length(B_vec)) = B_vec;
+                mIIR_A_array(ear, spk, 1:length(A_vec)) = A_vec;
+            end
+        end
     end
 end
 
