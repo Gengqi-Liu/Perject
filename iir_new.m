@@ -14,8 +14,8 @@ num_ears = 2;
 num_tx   = 6;              % 5.1声道: 6 Tx
 angle_idx = 53;            % 固定角度
 %% 2. IIR Design Parameters
-B_order = 7500;
-A_order = 7500;
+B_order = 5000;
+A_order = 5000;
 
 %% 3. Preallocate storage as 3D arrays
 mIIR_B = zeros(num_ears, num_tx, B_order+1);
