@@ -1,3 +1,10 @@
+Error using double
+Conversion to double from cell is not possible.
+
+Error in sgengqi (line 313)
+    b = double(squeeze(mIIR_B(iCRx,iCTx,:)));
+    
+    
 %10.10全新版本，调整了逻辑且使用5.1声道iir
 addpath('utils');
 SetParameters;
