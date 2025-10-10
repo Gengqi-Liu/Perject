@@ -1,3 +1,9 @@
+Error using filter
+Invalid data type. Input arrays must be numeric or logical.
+
+Error in sgengqi (line 314)
+        filter(squeeze(mIIR_B(iCRx,iCTx,:)), squeeze(mIIR_A(iCRx,iCTx,:)), ...
+
 % MATLAB 代码：WLS IIR 滤波器逼近、比较与误差量化 (新增 LSE & 残差)
 % -------------------------------------------------------------------------
 % 0. 设置与数据加载
