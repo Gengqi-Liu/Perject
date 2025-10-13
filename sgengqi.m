@@ -317,6 +317,9 @@ end
 % Replace original mOut with filtered version
 mOut = mOut_IIR;
 
+%targetRMS = 0.1; % 可调
+%currentRMS = rms(mOut(:));
+%mOut = mOut * (targetRMS/currentRMS);
     %% headphone equalization
     if 0%bHPEQ
       for iCRx=1:2
@@ -341,7 +344,7 @@ mOut = mOut_IIR;
     end
 
     %% Preamplifier
-    mOut      = 2*mOut;
+    mOut      = 256*mOut;
     fMaxAmpl  = max(max(abs(mOut(:))),fMaxAmpl);
     if bShowDisplay && mod(iCount,iNoIterShowDisplay)==1
       if fMaxAmpl>0.5
