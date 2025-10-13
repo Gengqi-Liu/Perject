@@ -1,0 +1,106 @@
+% =========================================================================
+% 10.13 - Simplified Real-Time 5.1 IIR Version (FIR removed)
+% =========================================================================
+addpath('utils');
+SetParameters;
+
+%% ------------------------------------------------------------------------
+% Initialize IIR Filters (for each ear × transmitter pair)
+% -------------------------------------------------------------------------
+if exist('IIR_filters.mat','file')
+  load('IIR_filters.mat','mIIR_B','mIIR_A');
+  disp('Loaded IIR filters (mIIR_B, mIIR_A)');
+else
+  % Placeholder: simple lowpass-type IIR (for testing)
+  [b0,a0] = butter(2, 0.4); % 2nd-order, normalized cutoff 0.4
+  mIIR_B = repmat(reshape(b0,1,1,[]),[2,6,1]); % 2 Rx × 6 Tx
+  mIIR_A = repmat(reshape(a0,1,1,[]),[2,6,1]);
+  disp('Using placeholder IIR filters (butterworth 2nd order)');
+end
+
+% Initialize IIR memory for all 12 filters
+maxOrder = max(size(mIIR_A,3), size(mIIR_B,3)) - 1;
+mIIRReg = zeros(maxOrder,2,6);  % [order, iCRx, iCTx]
+
+%% ------------------------------------------------------------------------
+% Initialize UDP headtracker
+% -------------------------------------------------------------------------
+if exist('u','var')
+  clear u
+end
+echoudp("off")
+if ispc
+  echoudp("on",5005)
+else
+  echoudp("on",5006)
+end
+u = udpport("datagram",'LocalHost','127.0.0.1','LocalPort',5005);
+
+%% ------------------------------------------------------------------------
+% Initialize system variables
+% -------------------------------------------------------------------------
+iCount        = 0;
+fAngleHor     = 0;
+fAngleVer     = 0;
+fAngleHorCal  = 0;
+iCalCount     = 0;
+iNoTx         = 6;       % 5.1 system
+bHeadphone    = true;
+fMaxAmpl      = 0;
+iCountMax     = 0;
+iRunTimeLen   = 100000;
+vRunTime      = zeros(1,iRunTimeLen,'single');
+vUnderrun     = false(1,iRunTimeLen);
+disp('Initialized all variables.');
+
+%% ------------------------------------------------------------------------
+% Crossover filter (optional)
+% -------------------------------------------------------------------------
+bTrinaural = false;
+crossFilt = crossoverFilter('NumCrossovers',1,'CrossoverFrequencies',5000, ...
+    'CrossoverSlopes',12);
+[b1,a1,b2,a2] = getFilterCoefficients(crossFilt,1);
+
+%% ------------------------------------------------------------------------
+% Real-time processing loop
+% -------------------------------------------------------------------------
+disp('Real-time IIR filtering starts ...');
+while true
+  iCount = iCount + 1;
+
+  %% Receive UDP headtracker data
+  if u.NumDatagramsAvailable > 0
+    data = read(u,u.NumDatagramsAvailable,"char");
+    sAngleNew = data(end).Data;
+    fAngleHor = str2double(sAngleNew(1:8));
+    fAngleVer = str2double(sAngleNew(9:16));
+  end
+
+  %% Read input audio block
+  mIn = fileReader(); % from your audio input stream
+  frameLength = size(mIn,1);
+
+  %% Apply IIR filtering (core step)
+  mOut = zeros(size(mIn));
+  for iCRx = 1:2
+    for iCTx = 1:iNoTx
+      [mOut(:,iCTx), mIIRReg(:,iCRx,iCTx)] = ...
+          filter(squeeze(mIIR_B(iCRx,iCTx,:)), squeeze(mIIR_A(iCRx,iCTx,:)), ...
+                 mIn(:,iCTx), mIIRReg(:,iCRx,iCTx));
+    end
+  end
+
+  %% Optional: headphone EQ or preamplifier
+  % mOut = 2 * mOut;  % gain
+
+  fMaxAmpl = max(max(abs(mOut(:))),fMaxAmpl);
+  if fMaxAmpl > 0.9
+    disp(['Warning: Max amplitude ', num2str(fMaxAmpl)]);
+  end
+
+  %% Write to audio output device
+  nUnderrun = play(deviceWriterActive,mOut);
+  if nUnderrun > 0
+    fprintf('Audio writer underrun by %d samples.\n', nUnderrun);
+  end
+end
