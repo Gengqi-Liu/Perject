@@ -305,106 +305,83 @@ while true % endless
 
 
 %% ---------------------------
-%% Hybrid FIR(front) + IIR(tail) concatenation (替代原来的串联 IIR)
-%% 目标：把 IIR 当作 FIR 的尾段（时域拼接），实现 1 + 2 - 3 的效果
+%% 混合式 FIR(前缀) + IIR(尾段) 拼接 (Hybrid FIR Prefix + IIR Tail Concatenation)
+%% 目的：将 IIR 冲激响应作为 FIR 的时域延续（尾段），在输入信号延迟后进行叠加。
 %% ---------------------------
 
 % 必要参数（请确保在主脚本初始化时设置）
-% iSplitSamples : 整数，FIR 的前缀长度（samples），IIR 模拟的是从 iSplitSamples 开始的尾段
-% frameLength   : 每帧样本数（与你主循环一致）
-% iNoTx         : 发送通道数（columns of mIn）
-% nRecvChan     : 接收通道数（例如 2）
+% iSplitSamples : 整数，FIR 脉冲响应的前缀长度（samples）。IIR 模拟从 iSplitSamples 开始的尾段。
+% frameLength   : 每帧样本数（与你主循环一致）
+% iNoTx         : 发送通道数（columns of mIn）
+% nRecvChan     : 接收通道数（例如 2）
 
 % 1) 检查 iSplitSamples 是否存在（若不存在，给出默认并警告）
 if ~exist('iSplitSamples','var') || isempty(iSplitSamples)
-  warning('iSplitSamples not found - using default 12000 samples. Please set iSplitSamples in init.');
-  iSplitSamples = 12000;
+  warning('iSplitSamples not found - using default 12000 samples. Please set iSplitSamples in init.');
+  iSplitSamples = 12000;
 end
 
 % 2) 延迟 FIFO 初始化（一次性，基于 iSplitSamples）
-% 我们用一个简单的样本级 FIFO：长度 = iSplitSamples + frameLength
-% 每帧把新 mIn 追加到尾部，前端输出长度为 frameLength（即整体延迟 iSplitSamples）
+% 采用样本级 FIFO：长度 = iSplitSamples + frameLength。实现对输入 mIn 的 iSplitSamples 延迟。
 if ~exist('xDelayBuf','var') || size(xDelayBuf,2) ~= iNoTx || size(xDelayBuf,1) ~= (iSplitSamples+frameLength)
-  % 初始化为零
-  xDelayBuf = zeros(iSplitSamples + frameLength, iNoTx);
-  % 便于调试：保存初次初始化时间（可选）
-  % disp(['xDelayBuf initialized: length=', num2str(size(xDelayBuf,1))]);
+  % 初始化为零
+  xDelayBuf = zeros(iSplitSamples + frameLength, iNoTx);
 end
 
-% 3) 将当前帧 mIn 追加到 FIFO（先移除最旧 frameLength，然后追加新块）
-% 队列表示： xDelayBuf = [ oldest_samples ... newest_samples ]
-% 每步我们做： pop first frameLength samples -> shift -> append mIn
-xDelayBuf(1:end-frameLength, :) = xDelayBuf(frameLength+1:end, :); % 前移
-xDelayBuf(end-frameLength+1:end, :) = mIn;                        % 追加当前帧
+% 3) 将当前帧 mIn 追加到 FIFO
+xDelayBuf(1:end-frameLength, :) = xDelayBuf(frameLength+1:end, :); % 前移 (移除最旧 frameLength)
+xDelayBuf(end-frameLength+1:end, :) = mIn;                        % 追加当前帧 mIn
 
-% 4) 从 FIFO 读出延迟后的一帧（这帧代表输入被延迟 iSplitSamples 样本）
+% 4) 从 FIFO 读出延迟后的一帧
+% delayedInput 即为延迟 iSplitSamples 样本后的输入信号，用于激励 IIR 尾段。
 delayedInput = xDelayBuf(1:frameLength, :); % size: frameLength × iNoTx
 
-% 5) 对每个 接收 × 发送 对，使用该延迟输入作为 IIR 的激励（filter 保持状态 mIIRReg）
-%    并将每个发送通道的 IIR 输出累加到对应接收通道的尾段贡献上
-%    注意：mIIRReg 的维度应与你原来使用 filter 时的一致
+% 5) IIR 滤波：对每个 接收 × 发送 对，将延迟输入作为 IIR 激励，累加尾段贡献
 nRecvChan = size(mIIR_B,1); % 例如 2
-mOutTail = zeros(frameLength, nRecvChan); % 用来累加所有发送通道对各接收通道的尾段贡献
+mOutTail = zeros(frameLength, nRecvChan); % 累加所有发送通道对各接收通道的 IIR 尾段贡献
 
 for iCRx = 1:nRecvChan
-  % 对每个发送通道进行滤波，然后把结果累加到该接收通道
-  for iCTx = 1:iNoTx
-    % 把系数整理成向量（确保不是 cell）
-    bIIR = squeeze(mIIR_B(iCRx,iCTx,:));
-    aIIR = squeeze(mIIR_A(iCRx,iCTx,:));
-    % 防护：若系数全零或长度为0，跳过
-    if isempty(bIIR) || all(bIIR==0) && (isempty(aIIR) || all(aIIR==0))
-      continue;
-    end
-    % 调用 filter，保持状态 mIIRReg(:,iCRx,iCTx)
-    try
-      [y_tail, mIIRReg(:,iCRx,iCTx)] = filter(bIIR, aIIR, delayedInput(:, iCTx), mIIRReg(:,iCRx,iCTx));
-    catch ME
-      % 出错时给出可读信息并跳过该通道（避免整个实时流程中断）
-      warning(['IIR filter failed at Rx=',num2str(iCRx),', Tx=',num2str(iCTx),': ', ME.message]);
-      y_tail = zeros(frameLength,1);
-      % 尝试重置该寄存器以便下次继续
-      try
-        mIIRReg(:,iCRx,iCTx) = zeros(max(length(aIIR),length(bIIR))-1,1);
-      catch
-        % 忽略
-      end
-    end
-    % 累加到该接收通道的尾段输出
-    mOutTail(:, iCRx) = mOutTail(:, iCRx) + y_tail;
-  end
+  % 对每个发送通道进行滤波，然后把结果累加到该接收通道
+  for iCTx = 1:iNoTx
+    % 把系数整理成向量
+    bIIR = squeeze(mIIR_B(iCRx,iCTx,:));
+    aIIR = squeeze(mIIR_A(iCRx,iCTx,:));
+    % 防护：若系数无效，跳过
+    if isempty(bIIR) || all(bIIR==0) && (isempty(aIIR) || all(aIIR==0))
+      continue;
+    end
+    % 调用 filter，保持状态 mIIRReg(:,iCRx,iCTx)。y_tail 即为 IIR 尾段的贡献。
+    try
+      [y_tail, mIIRReg(:,iCRx,iCTx)] = filter(bIIR, aIIR, delayedInput(:, iCTx), mIIRReg(:,iCRx,iCTx));
+    catch ME
+      % 出错时给出警告并跳过该通道
+      warning(['IIR filter failed at Rx=',num2str(iCRx),', Tx=',num2str(iCTx),': ', ME.message]);
+      y_tail = zeros(frameLength,1);
+      % 尝试重置该寄存器
+      try
+        mIIRReg(:,iCRx,iCTx) = zeros(max(length(aIIR),length(bIIR))-1,1);
+      catch
+        % 忽略
+      end
+    end
+    % 累加到该接收通道的尾段输出
+    mOutTail(:, iCRx) = mOutTail(:, iCRx) + y_tail;
+  end
 end
 
 % 6) 组合最终输出
-%    - 假设当前 mOut 是 FIR 前段输出（frameLength × nRecvChan）
-%    - 最终输出 = FIR_prefix_output + IIR_tail_output (时域连续拼接)
-%    注意：这里我们直接把尾段与前段相加（在拼接点处二者在时域上自然对齐，
-%    因为我们用 delayedInput 延迟 iSplitSamples）
+%    - mOut (当前) 是 FIR 前缀输出 (frameLength × nRecvChan)
+%    - 最终输出 = FIR_prefix_output + IIR_tail_output (时域连续叠加)
 if size(mOut,2) ~= nRecvChan
-  % 如果 mOut 的列数不是接收通道数，尝试做兼容处理（例如转置或合成）
-  % 这里给出一个保守的 fallback：如果 mOut 是每发送通道的输出，需要把它映射到接收通道。
-  % 你应根据你的系统在此处替换为正确的 mapping（例如乘以某个混合矩阵）。
-  warning('mOut column count does not match number of receive channels. Ensure mOut contains per-receiver signals.');
+  % 如果 mOut 的列数与接收通道数不符，给出警告并尝试兼容处理
+  warning('mOut column count does not match number of receive channels. Ensure mOut contains per-receiver signals.');
 end
 
 % 如果 mOut 列数大于或等于 nRecvChan，先截取前 nRecvChan 列（保守行为）
 mOutFIR_prefix = mOut(:, 1:nRecvChan);
 
-% 最终替换 mOut（保持尺寸与后续处理一致）
+% 最终替换 mOut：用 IIR 尾段贡献叠加到 FIR 前缀输出上
 mOut = mOutFIR_prefix + mOutTail;
-
-% （可选）更新并记录最大幅度、运行时间等（保持原风格）
-fMaxAmpl  = max(max(abs(mOut(:))), fMaxAmpl);
-if bShowDisplay && mod(iCount,iNoIterShowDisplay)==1
-  if fMaxAmpl>0.5
-    iCountMax = iCountMax + 1;
-    if iCountMax == 3000
-      fMaxAmpl = 0;
-      iCountMax = 0;
-    end
-    disp(['Critical maximal amplitude: ',num2str(fMaxAmpl)]);
-  end
-end
 
     %% headphone equalization
     if 0%bHPEQ
