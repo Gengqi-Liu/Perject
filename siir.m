@@ -297,91 +297,75 @@ while true % endless
       y_ring_cur(:,vInd4_y,:) = y_ring_cur(:,vInd4_y,:) + reshape(y_part4_cur,B,Bi(4)/B,[]);
     end
 
-    %% Take block from ring buffer
-    mOut_Old  = squeeze(y_ring_old(:,iCircPt_y,:));
-    mOut_Cur  = squeeze(y_ring_cur(:,iCircPt_y,:));
-    % Fading: Combine old and current output
-    mOut      = mWeightsDown.*mOut_Old + mWeightsUp.*mOut_Cur;
-
+    %% Take block from ring buffer
+    mOut_Old  = squeeze(y_ring_old(:,iCircPt_y,:));
+    mOut_Cur  = squeeze(y_ring_cur(:,iCircPt_y,:));
+    % Fading: Combine old and current output
+    mOut      = mWeightsDown.*mOut_Old + mWeightsUp.*mOut_Cur;
+    
+    % FIR 前缀结果 (由 NUPOLS 累加得出)
+    mOutFIR_prefix = mOut; 
+    nRecvChan = size(mIIR_B,1); % 接收通道数，例如 2
 
 %% ---------------------------
-%% 混合式 FIR(前缀) + IIR(尾段) 拼接 (Hybrid FIR Prefix + IIR Tail Concatenation)
-%% 目的：将 IIR 冲激响应作为 FIR 的时域延续（尾段），在输入信号延迟后进行叠加。
+%% 混合 FIR 前缀 (FD-OLA) + IIR 尾段 (TD Filter) 拼接
+%% 逻辑：用 IIR 对延迟输入进行时域滤波，以模拟冲激响应 (IR) 的长尾部分。
 %% ---------------------------
 
-% 必要参数（请确保在主脚本初始化时设置）
-% iSplitSamples : 整数，FIR 脉冲响应的前缀长度（samples）。IIR 模拟从 iSplitSamples 开始的尾段。
-% frameLength   : 每帧样本数（与你主循环一致）
-% iNoTx         : 发送通道数（columns of mIn）
-% nRecvChan     : 接收通道数（例如 2）
-
-% 1) 检查 iSplitSamples 是否存在（若不存在，给出默认并警告）
+% 1) 确定混合点 (iSplitSamples)
+% iSplitSamples 必须与 FD-OLA 算法 (H1..H4) 覆盖的IR长度保持一致。
 if ~exist('iSplitSamples','var') || isempty(iSplitSamples)
   warning('iSplitSamples not found - using default 12000 samples. Please set iSplitSamples in init.');
   iSplitSamples = 12000;
 end
 
-% 2) 延迟 FIFO 初始化（一次性，基于 iSplitSamples）
-% 采用样本级 FIFO：长度 = iSplitSamples + frameLength。实现对输入 mIn 的 iSplitSamples 延迟。
+% 2) 延迟 FIFO 初始化
+% FIFO 长度 = 混合点 + 帧长。用于获取精确延迟 iSplitSamples 的输入信号。
 if ~exist('xDelayBuf','var') || size(xDelayBuf,2) ~= iNoTx || size(xDelayBuf,1) ~= (iSplitSamples+frameLength)
-  % 初始化为零
   xDelayBuf = zeros(iSplitSamples + frameLength, iNoTx);
 end
 
-% 3) 将当前帧 mIn 追加到 FIFO
-xDelayBuf(1:end-frameLength, :) = xDelayBuf(frameLength+1:end, :); % 前移 (移除最旧 frameLength)
+% 3) 更新 FIFO：移位并追加当前输入 mIn
+xDelayBuf(1:end-frameLength, :) = xDelayBuf(frameLength+1:end, :); % 移除最旧帧并前移
 xDelayBuf(end-frameLength+1:end, :) = mIn;                        % 追加当前帧 mIn
 
-% 4) 从 FIFO 读出延迟后的一帧
-% delayedInput 即为延迟 iSplitSamples 样本后的输入信号，用于激励 IIR 尾段。
-delayedInput = xDelayBuf(1:frameLength, :); % size: frameLength × iNoTx
+% 4) 获取延迟后的输入信号
+delayedInput = xDelayBuf(1:frameLength, :); % 信号相对于当前时刻延迟了 iSplitSamples
 
-% 5) IIR 滤波：对每个 接收 × 发送 对，将延迟输入作为 IIR 激励，累加尾段贡献
-nRecvChan = size(mIIR_B,1); % 例如 2
-mOutTail = zeros(frameLength, nRecvChan); % 累加所有发送通道对各接收通道的 IIR 尾段贡献
+% 5) IIR 滤波：计算尾段贡献 mOutTail
+mOutTail = zeros(frameLength, nRecvChan); % 用来累加所有发送通道对各接收通道的 IIR 尾段贡献
 
 for iCRx = 1:nRecvChan
-  % 对每个发送通道进行滤波，然后把结果累加到该接收通道
   for iCTx = 1:iNoTx
-    % 把系数整理成向量
+    % 提取 IIR 系数
     bIIR = squeeze(mIIR_B(iCRx,iCTx,:));
     aIIR = squeeze(mIIR_A(iCRx,iCTx,:));
-    % 防护：若系数无效，跳过
-    if isempty(bIIR) || all(bIIR==0) && (isempty(aIIR) || all(aIIR==0))
+    
+    if isempty(bIIR) || (all(bIIR==0) && all(aIIR==0))
       continue;
     end
-    % 调用 filter，保持状态 mIIRReg(:,iCRx,iCTx)。y_tail 即为 IIR 尾段的贡献。
+    
+    % 使用延迟输入进行 IIR 滤波，保持状态 mIIRReg
     try
       [y_tail, mIIRReg(:,iCRx,iCTx)] = filter(bIIR, aIIR, delayedInput(:, iCTx), mIIRReg(:,iCRx,iCTx));
     catch ME
-      % 出错时给出警告并跳过该通道
       warning(['IIR filter failed at Rx=',num2str(iCRx),', Tx=',num2str(iCTx),': ', ME.message]);
       y_tail = zeros(frameLength,1);
-      % 尝试重置该寄存器
-      try
-        mIIRReg(:,iCRx,iCTx) = zeros(max(length(aIIR),length(bIIR))-1,1);
-      catch
-        % 忽略
-      end
+      try; mIIRReg(:,iCRx,iCTx) = zeros(max(length(aIIR),length(bIIR))-1,1); catch; end
     end
+    
     % 累加到该接收通道的尾段输出
     mOutTail(:, iCRx) = mOutTail(:, iCRx) + y_tail;
   end
 end
 
 % 6) 组合最终输出
-%    - mOut (当前) 是 FIR 前缀输出 (frameLength × nRecvChan)
-%    - 最终输出 = FIR_prefix_output + IIR_tail_output (时域连续叠加)
-if size(mOut,2) ~= nRecvChan
-  % 如果 mOut 的列数与接收通道数不符，给出警告并尝试兼容处理
-  warning('mOut column count does not match number of receive channels. Ensure mOut contains per-receiver signals.');
+% IIR 尾段贡献 (mOutTail) 与 FD-OLA 前缀贡献 (mOutFIR_prefix) 在时域上叠加。
+if size(mOutFIR_prefix,2) < nRecvChan
+  warning('FIR prefix output (mOut) column count is less than the number of receive channels. Scaling/Mapping is required.');
 end
 
-% 如果 mOut 列数大于或等于 nRecvChan，先截取前 nRecvChan 列（保守行为）
-mOutFIR_prefix = mOut(:, 1:nRecvChan);
-
-% 最终替换 mOut：用 IIR 尾段贡献叠加到 FIR 前缀输出上
-mOut = mOutFIR_prefix + mOutTail;
+mOut = mOutFIR_prefix(:, 1:nRecvChan) + mOutTail; % 取 mOut 的前 nRecvChan 列进行叠加
 
     %% headphone equalization
     if 0%bHPEQ
